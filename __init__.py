@@ -134,24 +134,23 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False, return_details=F
 
 
 def quiescence_gaussian_process(t, f, e):
+    hold_back = np.random.choice([False, True], len(t), True, [2./3., 1./3.])
+
     terms = celerite.terms
     kernel = terms.RealTerm(log_a=np.log(np.var(f)), log_c=-10.) \
              + terms.JitterTerm(log_sigma=np.log(np.std(f)))
     gp = celerite.GP(kernel, mean=np.median(f))
 
     def fit(clean):
-        gp.compute(t[clean], e[clean])
-        def neglike(params):
+        fit = clean & ~hold_back
+        test = clean & hold_back
+        gp.compute(t[fit], e[fit])
+        def cost(params):
             gp.set_parameter_vector(params)
-            loglike = gp.log_likelihood(f[clean])
-            # residuals = f[clean] - gp.predict(f[clean], t[clean], False, False)
-            # z = normaltest(residuals)[0]
-            # v = np.var(residuals/e[clean])
-            # penalty = z + (v + 1/v)
-            # return -(loglike - penalty)
-            return -loglike
+            residuals = f[test] - gp.predict(f[fit], t[test], False, False)
+            return np.sum(residuals**2/e[test]**2)
         guess = gp.get_parameter_vector()
-        soln = minimize(neglike, guess)
+        soln = minimize(cost, guess)
         assert soln.status in [0, 2]
         gp.set_parameter_vector(soln.x)
         gp.compute(t[clean], e[clean])
