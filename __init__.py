@@ -34,11 +34,11 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False, return_details=F
         # first pass using sigma-clipped points
         clean = np.abs(f - np.nanmedian(f)) < sigma_clip_factor*np.nanstd(f)
         gp.fit(clean)
-        lo, lo_var = gp.predict(f[clean], t, return_var=True)
+        lo, lo_var = gp.curve(t)
     else:
         clean = preclean
         gp.fit(clean)
-        lo, lo_var = gp.predict(f[clean], t, return_var=True)
+        lo, lo_var = gp.curve(t)
     count = 0
     while True:
         # not exactly doing this in the most readable way ever in the hopes of some speed increases since monte-carlo
@@ -73,7 +73,7 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False, return_details=F
         if np.any(combine):
             j_runs, j_gaps = i_left[combine], np.nonzero(combine)[0]
             j_runs, j_gaps = [a.tolist() for a in [j_runs, j_gaps]]
-            var_gaps = gp.predict(f[clean], t_gap_mid[j_gaps], return_var=True)[1] * dt_gaps[j_gaps] ** 2
+            var_gaps = gp.curve(t_gap_mid[j_gaps])[1] * dt_gaps[j_gaps] ** 2
             # while loop is my solution to problem of adjacent gaps (i.e. 3+ runs  and 2+ gaps need to all be comined)
             while len(j_gaps) > 0:
                 j_gap = j_gaps.pop(0)
@@ -103,7 +103,7 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False, return_details=F
             plt.plot(tnan, fnan,'b.-')
             plt.plot(t[~clean], f[~clean], 'r.')
             tt = np.linspace(t_edges[0], t_edges[-1], 1000)
-            lolo, lolo_var = gp.predict(f[oldclean], tt, return_var=True)
+            lolo, lolo_var = gp.curve(tt)
             lolo_std = np.sqrt(lolo_var)
             plt.plot(tt, lolo, 'k-')
             plt.fill_between(tt, lolo-lolo_std, lolo+lolo_std, color='k', alpha=0.4, edgecolor='none')
@@ -121,7 +121,7 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False, return_details=F
 
         # fit new quiescence points
         gp.fit(clean)
-        lo, lo_var = gp.predict(f[clean], t, return_var=True)
+        lo, lo_var = gp.curve(t)
         count += 1
 
     if return_details:
@@ -154,6 +154,8 @@ def quiescence_gaussian_process(t, f, e):
         soln = minimize(neglike, guess)
         assert soln.status in [0, 2]
         gp.set_parameter_vector(soln.x)
+        gp.compute(t[clean], e[clean])
+        gp.curve = lambda t: gp.predict(f[clean], t, return_var=True)
     gp.fit = fit
 
     return gp
