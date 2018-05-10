@@ -140,7 +140,7 @@ class QuiescenceModel(celerite.GP):
         terms = celerite.terms
         kernel = terms.RealTerm(log_a=np.log(np.var(f)), log_c=-10.) \
                  + terms.JitterTerm(log_sigma=np.log(np.std(f)))
-        super(QuiescenceModel, self).__init__(kernel, mean=np.median(f))
+        super(QuiescenceModel, self).__init__(kernel)
         self.t, self.f, self.e = t, f, e
         self.mask = np.ones(len(self.t), bool)
 
