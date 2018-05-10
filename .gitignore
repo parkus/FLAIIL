@@ -97,7 +97,4 @@ ENV/
 # mkdocs documentation
 /site
 
-# mypy
-.mypy_cache/
-.idea/workspace.xml
 .DS_Store
