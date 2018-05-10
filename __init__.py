@@ -15,6 +15,7 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False, return_details=F
     sigma_clip_factor = options.get('sigma_clip_factor', 2.)
     sigma_flare = options.get('sigma_flare', 3.)
     preclean = options.get('preclean', None)
+    spread_factor = options.get('spread_factor', 1.0)
 
     #region setup to handle gaps and other unchanging arrays
     t = (t0 + t1)/2.0
@@ -60,7 +61,7 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False, return_details=F
         fluences = np.interp(ends, t_edges, Iedges) - np.interp(begs, t_edges, Iedges)
         fluence_vars = np.interp(ends, t_edges, Vedges) - np.interp(begs, t_edges, Vedges)
 
-        # combine runs that are likely to span a gap
+        # combine "flares" where gap is likely due to noise
         f_gap = (hi[i_gaps] + hi[i_gaps + 1]) / 2.0
         fluence_gap = f_gap * dt_gaps
         i_left = np.searchsorted(ends, t_gap_beg, side='left')
@@ -92,10 +93,14 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False, return_details=F
         # flag runs that are anomalous as flares
         flare = (fluences > 0) & (fluences/np.sqrt(fluence_vars) > sigma_flare)
 
-        # update the flare point mask
+        # update the flare point mask, "spreading" out the mask from the flares a bit to be conservative
         oldclean = clean
-        ranges = np.array([begs, ends]).T
-        clean = inranges(t, ranges[~flare])
+        flare_ranges = np.array([begs, ends]).T
+        flare_ranges = flare_ranges[flare]
+        spans = flare_ranges[:,1] - flare_ranges[:,0]
+        flare_ranges[:,1] = flare_ranges[:,1] + spread_factor*spans
+        in_flare = [np.searchsorted(rng, t) == 1 for rng in flare_ranges]
+        clean = ~np.any(in_flare, 0)
 
         # plot step if desired
         if plot_steps:
@@ -129,7 +134,7 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False, return_details=F
     if return_details:
         results = dict(begs=begs, ends=ends, flare=flare,
                        fluences=fluences, fluence_errs=np.sqrt(fluence_vars),
-                       gp=q)
+                       qmodel=q)
         return results
     else:
         return begs, ends, flare
@@ -142,10 +147,14 @@ class QuiescenceModel(celerite.GP):
                  + terms.JitterTerm(log_sigma=np.log(np.std(f)))
         super(QuiescenceModel, self).__init__(kernel)
         self.t, self.f, self.e = t, f, e
+        self.n = len(self.t)
         self.mask = np.ones(len(self.t), bool)
 
-    def fit(self, mask):
-        self.mask = mask
+    def fit(self, mask=None):
+        if mask is None:
+            mask = self.mask
+        else:
+            self.mask = mask
         self.compute(self.t[mask], self.e[mask])
         def neglike(params):
             self.set_parameter_vector(params)
