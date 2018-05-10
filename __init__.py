@@ -29,16 +29,16 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False, return_details=F
     t_edges = np.append(t0, t1[-1])
     #endregion
 
-    gp = quiescence_gaussian_process(t, f, e)
+    q = QuiescenceModel(t, f, e)
     if preclean is None:
         # first pass using sigma-clipped points
         clean = np.abs(f - np.nanmedian(f)) < sigma_clip_factor*np.nanstd(f)
-        gp.fit(clean)
-        lo, lo_var = gp.curve(t)
+        q.fit(clean)
+        lo, lo_var = q.curve(t)
     else:
         clean = preclean
-        gp.fit(clean)
-        lo, lo_var = gp.curve(t)
+        q.fit(clean)
+        lo, lo_var = q.curve(t)
     count = 0
     while True:
         # not exactly doing this in the most readable way ever in the hopes of some speed increases since monte-carlo
@@ -73,7 +73,7 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False, return_details=F
         if np.any(combine):
             j_runs, j_gaps = i_left[combine], np.nonzero(combine)[0]
             j_runs, j_gaps = [a.tolist() for a in [j_runs, j_gaps]]
-            var_gaps = gp.curve(t_gap_mid[j_gaps])[1] * dt_gaps[j_gaps] ** 2
+            var_gaps = q.curve(t_gap_mid[j_gaps])[1] * dt_gaps[j_gaps] ** 2
             # while loop is my solution to problem of adjacent gaps (i.e. 3+ runs  and 2+ gaps need to all be comined)
             while len(j_gaps) > 0:
                 j_gap = j_gaps.pop(0)
@@ -103,7 +103,7 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False, return_details=F
             plt.plot(tnan, fnan,'b.-')
             plt.plot(t[~clean], f[~clean], 'r.')
             tt = np.linspace(t_edges[0], t_edges[-1], 1000)
-            lolo, lolo_var = gp.curve(tt)
+            lolo, lolo_var = q.curve(tt)
             lolo_std = np.sqrt(lolo_var)
             plt.plot(tt, lolo, 'k-')
             plt.fill_between(tt, lolo-lolo_std, lolo+lolo_std, color='k', alpha=0.4, edgecolor='none')
@@ -111,7 +111,6 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False, return_details=F
             plt.xlabel('flux')
             plt.title('Iteration {}'.format(count))
             raw_input('Enter to close figure and continue.')
-            plt.close()
 
         # check for convergence
         if np.all(clean == oldclean):
@@ -119,46 +118,47 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False, return_details=F
         if count > maxiter:
             raise StopIteration('Iteration limit of {} exceeded.'.format(maxiter))
 
+        if plot_steps:
+            plt.close()
+
         # fit new quiescence points
-        gp.fit(clean)
-        lo, lo_var = gp.curve(t)
+        q.fit(clean)
+        lo, lo_var = q.curve(t)
         count += 1
 
     if return_details:
         results = dict(begs=begs, ends=ends, flare=flare,
                        fluences=fluences, fluence_errs=np.sqrt(fluence_vars),
-                       gp=gp)
+                       gp=q)
         return results
     else:
         return begs, ends, flare
 
 
-def quiescence_gaussian_process(t, f, e):
-    terms = celerite.terms
-    kernel = terms.RealTerm(log_a=np.log(np.var(f)), log_c=-10.) \
-             + terms.JitterTerm(log_sigma=np.log(np.std(f)))
-    gp = celerite.GP(kernel, mean=np.median(f))
+class QuiescenceModel(celerite.GP):
+    def __init__(self, t, f, e):
+        terms = celerite.terms
+        kernel = terms.RealTerm(log_a=np.log(np.var(f)), log_c=-10.) \
+                 + terms.JitterTerm(log_sigma=np.log(np.std(f)))
+        super(QuiescenceModel, self).__init__(kernel, mean=np.median(f))
+        self.t, self.f, self.e = t, f, e
+        self.mask = np.ones(len(self.t), bool)
 
-    def fit(clean):
-        gp.compute(t[clean], e[clean])
+    def fit(self, mask):
+        self.mask = mask
+        self.compute(self.t[mask], self.e[mask])
         def neglike(params):
-            gp.set_parameter_vector(params)
-            loglike = gp.log_likelihood(f[clean])
-            # residuals = f[clean] - gp.predict(f[clean], t[clean], False, False)
-            # z = normaltest(residuals)[0]
-            # v = np.var(residuals/e[clean])
-            # penalty = z + (v + 1/v)
-            # return -(loglike - penalty)
+            self.set_parameter_vector(params)
+            loglike = self.log_likelihood(self.f[mask])
             return -loglike
-        guess = gp.get_parameter_vector()
+        guess = self.get_parameter_vector()
         soln = minimize(neglike, guess)
         assert soln.status in [0, 2]
-        gp.set_parameter_vector(soln.x)
-        gp.compute(t[clean], e[clean])
-        gp.curve = lambda t: gp.predict(f[clean], t, return_var=True)
-    gp.fit = fit
+        self.set_parameter_vector(soln.x)
+        self.compute(self.t[mask], self.e[mask])
 
-    return gp
+    def curve(self, t):
+        return self.predict(self.f[self.mask], t, return_var=True)
 
 
 def run_slices(x, endpts=True):
