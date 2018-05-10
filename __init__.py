@@ -12,8 +12,8 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False, return_details=F
     # parse options
     maxiter = options.get('maxiter', 10*len(f))
     gap_factor = options.get('gap_factor', 0.5)
-    sigma_clip_factor = options.get('sigma_clip_factor', 3.)
-    sigma_flare = options.get('sigma_flare', 5.)
+    sigma_clip_factor = options.get('sigma_clip_factor', 2.)
+    sigma_flare = options.get('sigma_flare', 3.)
     preclean = options.get('preclean', None)
 
     #region setup to handle gaps and other unchanging arrays
