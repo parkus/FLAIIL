@@ -16,7 +16,7 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
     sigma_flare = options.get('sigma_flare', 3.)
     preclean = options.get('preclean', None)
     spread_factor = options.get('spread_factor', 1.0)
-    end_window = options.get('end_window', 100.)
+    sig_combine = options.get('sig_combine', 1.0)
 
     #region setup to handle gaps and other unchanging arrays
     t = (t0 + t1)/2.0
@@ -29,17 +29,6 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
     dt_gaps = t_gap_end - t_gap_beg
     dt = t1 - t0
     t_edges = np.unique(np.concatenate([t0, t1]))
-
-    # prep for smoothing
-    dt_smooth = np.mean(dt)/10.
-    t_smooth = np.arange(t_edges[0],  t_edges[-1] + dt_smooth, dt_smooth)
-    exposure_ranges = np.array([t_ends[:-1:2], t_ends[1::2]]).T
-    exposure_ranges[:,0] -= end_window
-    exposure_ranges[:,1] += end_window
-    exposure_ranges = reduce(rangeset_union, exposure_ranges[1:], exposure_ranges[:1])
-    t_smooth = t_smooth[inranges(t_smooth, exposure_ranges)]
-    t_smooth0 = t_smooth - end_window/2.
-    t_smooth1 = t_smooth + end_window/2.
     #endregion
 
     q = QuiescenceModel(t, f, e)
@@ -80,27 +69,19 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
         # flag runs that are anomalous as flares
         flare = (fluences > 0) & (fluences/np.sqrt(fluence_vars) > sigma_flare)
 
-        # redefine edges of flares according to where a moving average becomes consistent with quiescence
-        hi_smooth = (Iinterp(t_smooth1) - Iinterp(t_smooth0))/end_window
-        flare_ranges = []
-        for i in np.nonzero(flare)[0]:
-            zero = (hi_smooth <= 0)
-            zero_before = zero & (t_smooth <= begs[i])
-            zero_after = zero & (t_smooth >= ends[i])
-            i_beg = np.max(np.nonzero(zero_before)[0])
-            i_end = np.min(np.nonzero(zero_after)[0])
-            beg = t_smooth[i_beg] + end_window/2.
-            end = t_smooth[i_end] - end_window/2.
-            flare_ranges.append([beg, end])
-        flare_ranges = np.array(flare_ranges)
-
-        # combine overlapping flares and recompute fluences
-        flare_ranges = reduce(rangeset_union, flare_ranges[1:], flare_ranges[:1])
+        # if avg flux between two flares is signficantly above quiescence, combine them
+        flare_ranges = np.array([begs[flare], ends[flare]]).T
+        gap_ranges = np.array([ends[flare][:-1], begs[flare][1:]]).T
+        Igap = Iinterp(gap_ranges[:,1]) - Iinterp(gap_ranges[:,0])
+        Egap = np.sqrt(Vinterp(gap_ranges[:,1]) - Vinterp(gap_ranges[:,0]))
+        remove_gap = Igap/Egap > sig_combine
+        if np.any(remove_gap):
+            flare_ranges = reduce(rangeset_union, flare_ranges, gap_ranges[remove_gap])
 
         # update the flare point mask, "spreading" out the mask from the flares a bit to be conservative
         oldclean = clean
-        # spans = flare_ranges[:,1] - flare_ranges[:,0]
-        # flare_ranges[:,1] = flare_ranges[:,1] + spread_factor*spans
+        spans = flare_ranges[:,1] - flare_ranges[:,0]
+        flare_ranges[:,1] = flare_ranges[:,1] + spread_factor*spans
         in_flare = [np.searchsorted(rng, t) == 1 for rng in flare_ranges]
         clean = ~np.any(in_flare, 0)
 
