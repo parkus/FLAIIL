@@ -3,13 +3,12 @@ import celerite
 from range_utils import rangeset_union, inranges
 from scipy.optimize import minimize
 from matplotlib import pyplot as plt
-from scipy.stats import normaltest
 
 
 # FLAIIL: FLAre Identification in Interrupted Lightcurves
 
 
-def identify_flares(t0, t1, f, e, options={}, plot_steps=False, return_details=False):
+def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
     # parse options
     maxiter = options.get('maxiter', 10*len(f))
     gap_factor = options.get('gap_factor', 0.5)
@@ -17,6 +16,7 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False, return_details=F
     sigma_flare = options.get('sigma_flare', 3.)
     preclean = options.get('preclean', None)
     spread_factor = options.get('spread_factor', 1.0)
+    end_window = options.get('end_window', 100.)
 
     #region setup to handle gaps and other unchanging arrays
     t = (t0 + t1)/2.0
@@ -28,7 +28,18 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False, return_details=F
     t_gap_mid = (t_ends[1:-1:2] + t_ends[2::2]) / 2.
     dt_gaps = t_gap_end - t_gap_beg
     dt = t1 - t0
-    t_edges = np.append(t0, t1[-1])
+    t_edges = np.unique(np.concatenate([t0, t1]))
+
+    # prep for smoothing
+    dt_smooth = np.mean(dt)/10.
+    t_smooth = np.arange(t_edges[0],  t_edges[-1] + dt_smooth, dt_smooth)
+    exposure_ranges = np.array([t_ends[:-1:2], t_ends[1::2]]).T
+    exposure_ranges[:,0] -= end_window
+    exposure_ranges[:,1] += end_window
+    exposure_ranges = reduce(rangeset_union, exposure_ranges[1:], exposure_ranges[:1])
+    t_smooth = t_smooth[inranges(t_smooth, exposure_ranges)]
+    t_smooth0 = t_smooth - end_window/2.
+    t_smooth1 = t_smooth + end_window/2.
     #endregion
 
     q = QuiescenceModel(t, f, e)
@@ -54,52 +65,42 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False, return_details=F
         # compute cumulative integral
         F = dt * hi
         V = dt**2 * hi_var
+        F = np.insert(F, i_gaps, 0)
+        V = np.insert(V, i_gaps, dt_gaps**2*q.curve(t_gap_mid)[1])
         Iedges = np.insert(np.cumsum(F), 0, 0)
         Vedges = np.insert(np.cumsum(V), 0, 0)
+        Iinterp = lambda t: np.interp(t, t_edges, Iedges)
+        Vinterp = lambda t: np.interp(t, t_edges, Vedges)
 
         # interpolate fluences of runs above and below quiescence from cumulative integral
         begs, ends = gappy_runs(t, hi, t_ends, t_gap_mid)
-        fluences = np.interp(ends, t_edges, Iedges) - np.interp(begs, t_edges, Iedges)
-        fluence_vars = np.interp(ends, t_edges, Vedges) - np.interp(begs, t_edges, Vedges)
-
-        # combine "flares" where gap is likely due to noise
-        f_gap = (hi[i_gaps] + hi[i_gaps + 1]) / 2.0
-        fluence_gap = f_gap * dt_gaps
-        i_left = np.searchsorted(ends, t_gap_beg, side='left')
-        i_right = np.searchsorted(begs, t_gap_end, side='left')
-        fluence_left = fluences[i_left]
-        fluence_right = fluences[i_right]
-        fluence_bracket = fluence_left + fluence_right
-        combine = (fluence_gap > 0) & (fluence_left > 0) & (fluence_right > 0) & \
-                  (fluence_gap < gap_factor*fluence_bracket)
-        if np.any(combine):
-            j_runs, j_gaps = i_left[combine], np.nonzero(combine)[0]
-            j_runs, j_gaps = [a.tolist() for a in [j_runs, j_gaps]]
-            var_gaps = q.curve(t_gap_mid[j_gaps])[1] * dt_gaps[j_gaps] ** 2
-            # while loop is my solution to problem of adjacent gaps (i.e. 3+ runs  and 2+ gaps need to all be comined)
-            while len(j_gaps) > 0:
-                j_gap = j_gaps.pop(0)
-                j_run = j_runs.pop(0)
-                j0, j1 = j_run, j_run+1
-                fluence_combined = fluence_bracket[j_gap] + fluence_gap[j_gap]
-                fluence_var_combined = fluence_vars[j0] + fluence_vars[j1] + var_gaps[j_gap]
-                fluences[j_run] = fluence_combined
-                fluence_vars[j_run] = fluence_var_combined
-                fluences = np.delete(fluences, j1)
-                fluence_vars = np.delete(fluence_vars, j1)
-                begs = np.delete(begs, j1)
-                ends = np.delete(ends, j0)
-        #endregion
+        fluences = Iinterp(ends) - Iinterp(begs)
+        fluence_vars = Vinterp(ends) - Vinterp(begs)
 
         # flag runs that are anomalous as flares
         flare = (fluences > 0) & (fluences/np.sqrt(fluence_vars) > sigma_flare)
 
+        # redefine edges of flares according to where a moving average becomes consistent with quiescence
+        hi_smooth = (Iinterp(t_smooth1) - Iinterp(t_smooth0))/end_window
+        flare_ranges = []
+        for i in np.nonzero(flare)[0]:
+            zero = (hi_smooth <= 0)
+            zero_before = zero & (t_smooth <= begs[i])
+            zero_after = zero & (t_smooth >= ends[i])
+            i_beg = np.max(np.nonzero(zero_before)[0])
+            i_end = np.min(np.nonzero(zero_after)[0])
+            beg = t_smooth[i_beg] + end_window/2.
+            end = t_smooth[i_end] - end_window/2.
+            flare_ranges.append([beg, end])
+        flare_ranges = np.array(flare_ranges)
+
+        # combine overlapping flares and recompute fluences
+        flare_ranges = reduce(rangeset_union, flare_ranges[1:], flare_ranges[:1])
+
         # update the flare point mask, "spreading" out the mask from the flares a bit to be conservative
         oldclean = clean
-        flare_ranges = np.array([begs, ends]).T
-        flare_ranges = flare_ranges[flare]
-        spans = flare_ranges[:,1] - flare_ranges[:,0]
-        flare_ranges[:,1] = flare_ranges[:,1] + spread_factor*spans
+        # spans = flare_ranges[:,1] - flare_ranges[:,0]
+        # flare_ranges[:,1] = flare_ranges[:,1] + spread_factor*spans
         in_flare = [np.searchsorted(rng, t) == 1 for rng in flare_ranges]
         clean = ~np.any(in_flare, 0)
 
@@ -132,13 +133,7 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False, return_details=F
         lo, lo_var = q.curve(t)
         count += 1
 
-    if return_details:
-        results = dict(begs=begs, ends=ends, flare=flare,
-                       fluences=fluences, fluence_errs=np.sqrt(fluence_vars),
-                       qmodel=q)
-        return results
-    else:
-        return begs, ends, flare
+    return flare_ranges, q
 
 
 class QuiescenceModel(celerite.GP):
@@ -212,7 +207,7 @@ def block_edges(x):
 def gappy_runs(t, y, t_ends, t_gap_mid):
     # find the times of zero crossings
     t_roots = roots(t, y)
-    gaproots = inranges(t_roots, t_ends[1:-1].reshape((-1,2)))
+    gaproots = inranges(t_roots, t_ends[1:-1].reshape((-1, 2)))
     t_roots =t_roots[~gaproots]
 
     # consider the start and end of each exposure a zero crossing, so add those in
@@ -262,3 +257,5 @@ def exposure_gaps(t0, t1):
     igaps, = np.nonzero(gaps)
     igaps += 1
     return igaps
+
+
