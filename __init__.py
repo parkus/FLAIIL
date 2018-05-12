@@ -10,19 +10,16 @@ from matplotlib import pyplot as plt
 
 def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
     # parse options
-    maxiter = options.get('maxiter', 10*len(f))
-    gap_factor = options.get('gap_factor', 0.5)
+    maxiter = options.get('maxiter', len(f))
     sigma_clip_factor = options.get('sigma_clip_factor', 2.)
-    sigma_flare = options.get('sigma_flare', 3.)
+    sigma_suspect = options.get('sigma_flare', 3.)
+    sigma_flare = options.get('sigma_flare', 5.)
     preclean = options.get('preclean', None)
-    spread_factor = options.get('spread_factor', 1.0)
-    sig_combine = options.get('sig_combine', 1.0)
+    extend_factor = options.get('extend_factor', 1.5)
 
     #region setup to handle gaps and other unchanging arrays
     t = (t0 + t1)/2.0
     i_gaps = exposure_gaps(t0, t1)
-    tnan = np.insert(t, i_gaps, np.nan)
-    fnan = np.insert(f, i_gaps, np.nan)
     t_gap_beg, t_gap_end = t1[i_gaps - 1], t0[i_gaps]
     t_ends = np.sort(np.concatenate([t0[:1], t_gap_beg, t_gap_end, t1[-1:]]))
     t_gap_mid = (t_ends[1:-1:2] + t_ends[2::2]) / 2.
@@ -31,21 +28,19 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
     t_edges = np.unique(np.concatenate([t0, t1]))
     #endregion
 
-    q = QuiescenceModel(t, f, e)
+    qmodel = QuiescenceModel(t, f, e)
     if preclean is None:
         # first pass using sigma-clipped points
         clean = np.abs(f - np.nanmedian(f)) < sigma_clip_factor*np.nanstd(f)
-        q.fit(clean)
-        lo, lo_var = q.curve(t)
+        qmodel.fit(clean)
+        lo, lo_var = qmodel.curve(t)
     else:
         clean = preclean
-        q.fit(clean)
-        lo, lo_var = q.curve(t)
+        qmodel.fit(clean)
+        lo, lo_var = qmodel.curve(t)
     count = 0
+    oldclean = []
     while True:
-        # not exactly doing this in the most readable way ever in the hopes of some speed increases since monte-carlo
-        # simulations of false alarm probabilities and completeness are likely
-
         # get quiescence-subtracted values
         hi = f - lo
         hi_var = e**2 + lo_var
@@ -55,7 +50,7 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
         F = dt * hi
         V = dt**2 * hi_var
         F = np.insert(F, i_gaps, 0)
-        V = np.insert(V, i_gaps, dt_gaps**2*q.curve(t_gap_mid)[1])
+        V = np.insert(V, i_gaps, dt_gaps**2*qmodel.curve(t_gap_mid)[1])
         Iedges = np.insert(np.cumsum(F), 0, 0)
         Vedges = np.insert(np.cumsum(V), 0, 0)
         Iinterp = lambda t: np.interp(t, t_edges, Iedges)
@@ -66,42 +61,31 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
         fluences = Iinterp(ends) - Iinterp(begs)
         fluence_vars = Vinterp(ends) - Vinterp(begs)
 
-        # flag runs that are anomalous as flares
-        flare = (fluences > 0) & (fluences/np.sqrt(fluence_vars) > sigma_flare)
+        # flag runs that are anomalous
+        anom = abs(fluences/np.sqrt(fluence_vars)) > sigma_suspect
 
-        # if avg flux between two flares is signficantly above quiescence, combine them
-        flare_ranges = np.array([begs[flare], ends[flare]]).T
-        gap_ranges = np.array([ends[flare][:-1], begs[flare][1:]]).T
-        Igap = Iinterp(gap_ranges[:,1]) - Iinterp(gap_ranges[:,0])
-        Egap = np.sqrt(Vinterp(gap_ranges[:,1]) - Vinterp(gap_ranges[:,0]))
-        remove_gap = Igap/Egap > sig_combine
-        if np.any(remove_gap):
-            flare_ranges = reduce(rangeset_union, flare_ranges, gap_ranges[remove_gap])
-
-        # update the flare point mask, "spreading" out the mask from the flares a bit to be conservative
-        oldclean = clean
-        spans = flare_ranges[:,1] - flare_ranges[:,0]
-        flare_ranges[:,1] = flare_ranges[:,1] + spread_factor*spans
-        in_flare = [np.searchsorted(rng, t) == 1 for rng in flare_ranges]
+        # update the flare point mask, extending the mask from the end of flares to be a bit to be conservative
+        anom_ranges = np.array([begs[anom], ends[anom]]).T
+        oldclean.append(clean)
+        if len(oldclean) > 2:
+            oldclean.pop(0)
+        spans = anom_ranges[:,1] - anom_ranges[:,0]
+        anom_ranges[:,1] = anom_ranges[:,1] + extend_factor*spans
+        in_flare = [np.searchsorted(rng, t) == 1 for rng in anom_ranges]
         clean = ~np.any(in_flare, 0)
 
         # plot step if desired
         if plot_steps:
-            plt.figure()
-            plt.plot(tnan, fnan,'b.-')
-            plt.plot(t[~clean], f[~clean], 'r.')
-            tt = np.linspace(t_edges[0], t_edges[-1], 1000)
-            lolo, lolo_var = q.curve(tt)
-            lolo_std = np.sqrt(lolo_var)
-            plt.plot(tt, lolo, 'k-')
-            plt.fill_between(tt, lolo-lolo_std, lolo+lolo_std, color='k', alpha=0.4, edgecolor='none')
-            plt.xlabel('time')
-            plt.xlabel('flux')
+            tnan = np.insert(t, i_gaps, np.nan)
+            fnan = np.insert(f, i_gaps, np.nan)
+            standard_flareplot(tnan, fnan, anom_ranges, anom_ranges, qmodel)
             plt.title('Iteration {}'.format(count))
             raw_input('Enter to close figure and continue.')
 
-        # check for convergence
-        if np.all(clean == oldclean):
+        # check for convergence (or oscillating convergence)
+        if np.all(clean == oldclean[-1]):
+            break
+        if count > 10 and np.all(clean == oldclean[-2]):
             break
         if count > maxiter:
             raise StopIteration('Iteration limit of {} exceeded.'.format(maxiter))
@@ -110,11 +94,42 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
             plt.close()
 
         # fit new quiescence points
-        q.fit(clean)
-        lo, lo_var = q.curve(t)
+        qmodel.fit(clean)
+        lo, lo_var = qmodel.curve(t)
         count += 1
 
-    return flare_ranges, q
+    # divide anomalous ranges into actual flares and just suspect ranges
+    anom_ranges = reduce(rangeset_union, anom_ranges[1:], anom_ranges[:1])
+    sigmas = []
+    for rng in anom_ranges:
+        inrng = inranges(begs, rng, inclusive=[True, False])
+        sigma = fluences[inrng]/np.sqrt(fluence_vars[inrng])
+        imx = np.argmax(np.abs(sigma))
+        sigma = sigma[imx]
+        sigmas.append(sigma)
+    sigmas = np.array(sigmas)
+    print sigmas
+    flare = sigmas > sigma_flare
+    flare_ranges = anom_ranges[flare]
+    suspect_ranges = anom_ranges[~flare]
+
+    return flare_ranges, suspect_ranges, qmodel
+
+
+def standard_flareplot(t, f, flare_ranges, suspect_ranges, qmodel):
+    plt.figure()
+    plt.plot(t, f, 'b.-')
+    suspect = inranges(t, suspect_ranges)
+    flare = inranges(t, flare_ranges)
+    plt.plot(t[suspect], f[suspect], '.', color='orange')
+    plt.plot(t[flare], f[flare], 'r.')
+    tt = np.linspace(t[0], t[-1], 1000)
+    lolo, lolo_var = qmodel.curve(tt)
+    lolo_std = np.sqrt(lolo_var)
+    plt.plot(tt, lolo, 'k-')
+    plt.fill_between(tt, lolo - lolo_std, lolo + lolo_std, color='k', alpha=0.4, edgecolor='none')
+    plt.xlabel('Time')
+    plt.xlabel('Flux')
 
 
 class QuiescenceModel(celerite.GP):
@@ -238,5 +253,4 @@ def exposure_gaps(t0, t1):
     igaps, = np.nonzero(gaps)
     igaps += 1
     return igaps
-
 
