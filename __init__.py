@@ -140,18 +140,22 @@ class QuiescenceModel(celerite.GP):
         self.n = len(self.t)
         self.mask = np.ones(len(self.t), bool)
 
-    def fit(self, mask=None):
+    def _get_set_mask(self, mask=None):
         if mask is None:
-            mask = self.mask
+            return self.mask
         else:
             self.mask = mask
+            return mask
+
+    def log_likelihood(self, params):
+        self.set_parameter_vector(params)
+        return super(QuiescenceModel, self).log_likelihood(self.f[self.mask])
+
+    def fit(self, mask=None):
+        mask = self._get_set_mask(mask)
         self.compute(self.t[mask], self.e[mask])
-        def neglike(params):
-            self.set_parameter_vector(params)
-            loglike = self.log_likelihood(self.f[mask])
-            return -loglike
         guess = self.get_parameter_vector()
-        soln = minimize(neglike, guess)
+        soln = minimize(lambda params: -self.log_likelihood(params), guess)
         assert soln.status in [0, 2]
         self.set_parameter_vector(soln.x)
         self.compute(self.t[mask], self.e[mask])
