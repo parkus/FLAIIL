@@ -7,7 +7,6 @@ from matplotlib import pyplot as plt
 
 # FLAIIL: FLAre Identification in Interrupted Lightcurves
 
-
 def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
     # parse options
     maxiter = options.get('maxiter', len(f))
@@ -135,8 +134,7 @@ def standard_flareplot(t, f, flare_ranges, suspect_ranges, qmodel):
 class QuiescenceModel(celerite.GP):
     def __init__(self, t, f, e):
         terms = celerite.terms
-        kernel = terms.RealTerm(log_a=np.log(np.var(f)), log_c=-10.) \
-                 + terms.JitterTerm(log_sigma=np.log(np.std(f)))
+        kernel = terms.RealTerm(log_a=np.log(np.var(f)), log_c=-10.)
         super(QuiescenceModel, self).__init__(kernel)
         self.t, self.f, self.e = t, f, e
         self.n = len(self.t)
