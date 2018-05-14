@@ -1,6 +1,6 @@
 import numpy as np
 import celerite
-from range_utils import rangeset_union, inranges
+from range_utils import rangeset_union, inranges, rangeset_intersect
 from scipy.optimize import minimize
 from matplotlib import pyplot as plt
 
@@ -21,6 +21,7 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
     i_gaps = exposure_gaps(t0, t1)
     t_gap_beg, t_gap_end = t1[i_gaps - 1], t0[i_gaps]
     t_ends = np.sort(np.concatenate([t0[:1], t_gap_beg, t_gap_end, t1[-1:]]))
+    t_groups = np.array([t_ends[:-1], t_ends[1:]]).T[::2]
     t_gap_mid = (t_ends[1:-1:2] + t_ends[2::2]) / 2.
     dt_gaps = t_gap_end - t_gap_beg
     dt = t1 - t0
@@ -71,7 +72,7 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
         spans = anom_ranges[:,1] - anom_ranges[:,0]
         anom_ranges[:,1] = anom_ranges[:,1] + extend_factor*spans
         in_flare = [np.searchsorted(rng, t) == 1 for rng in anom_ranges]
-        clean = ~np.any(in_flare, 0)
+        clean = ~np.any(in_flare, 0) if len(anom_ranges) > 0 else np.ones(len(t), bool)
 
         # plot step if desired
         if plot_steps:
@@ -99,6 +100,7 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
 
     # divide anomalous ranges into actual flares and just suspect ranges
     anom_ranges = reduce(rangeset_union, anom_ranges[1:], anom_ranges[:1])
+    anom_ranges = rangeset_intersect(anom_ranges, t_groups)
     sigmas = []
     for rng in anom_ranges:
         inrng = inranges(begs, rng, inclusive=[True, False])
@@ -139,6 +141,7 @@ class QuiescenceModel(celerite.GP):
         self.t, self.f, self.e = t, f, e
         self.n = len(self.t)
         self.mask = np.ones(len(self.t), bool)
+        self.fit_params = None
 
     def _get_set_mask(self, mask=None):
         if mask is None:
@@ -157,8 +160,12 @@ class QuiescenceModel(celerite.GP):
         guess = self.get_parameter_vector()
         soln = minimize(lambda params: -self.log_likelihood(params), guess)
         assert soln.status in [0, 2]
-        self.set_parameter_vector(soln.x)
-        self.compute(self.t[mask], self.e[mask])
+        self.fit_params = soln.x
+        self.set_to_best_fit()
+
+    def set_to_best_fit(self):
+        self.set_parameter_vector(self.fit_params)
+        self.compute(self.t[self.mask], self.e[self.mask])
 
     def curve(self, t):
         return self.predict(self.f[self.mask], t, return_var=True)
