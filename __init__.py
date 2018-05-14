@@ -134,10 +134,12 @@ def standard_flareplot(t, f, flare_ranges, suspect_ranges, qmodel):
 
 
 class QuiescenceModel(celerite.GP):
-    def __init__(self, t, f, e):
+    def __init__(self, t, f, e, initial_params=None):
         terms = celerite.terms
-        kernel = terms.RealTerm(log_a=np.log(np.var(f)), log_c=-10.)
-        super(QuiescenceModel, self).__init__(kernel)
+        if initial_params == None:
+            initial_params = dict(log_a=np.log(np.var(f)), log_c=-10.)
+        kernel = terms.RealTerm(**initial_params)
+        super(QuiescenceModel, self).__init__(kernel, mean=np.median(f), fit_mean=True)
         self.t, self.f, self.e = t, f, e
         self.n = len(self.t)
         self.mask = np.ones(len(self.t), bool)
@@ -154,12 +156,14 @@ class QuiescenceModel(celerite.GP):
         self.set_parameter_vector(params)
         return super(QuiescenceModel, self).log_likelihood(self.f[self.mask])
 
-    def fit(self, mask=None):
+    def fit(self, mask=None, method='Nedler-Mead'):
         mask = self._get_set_mask(mask)
         self.compute(self.t[mask], self.e[mask])
         guess = self.get_parameter_vector()
-        soln = minimize(lambda params: -self.log_likelihood(params), guess)
-        assert soln.status in [0, 2]
+        soln = minimize(lambda params: -self.log_likelihood(params), guess, method='nelder-mead')
+        if not soln.success or np.allclose(soln.x, guess):
+            raise ValueError('Gaussian process fit to quiescence did not converge. Perhaps try a different minimize '
+                             'method or different initial parameters.')
         self.fit_params = soln.x
         self.set_to_best_fit()
 
