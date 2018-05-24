@@ -109,7 +109,7 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
         sigma = sigma[imx]
         sigmas.append(sigma)
     sigmas = np.array(sigmas)
-    print sigmas
+    # print sigmas
     flare = sigmas > sigma_flare
     flare_ranges = anom_ranges[flare]
     suspect_ranges = anom_ranges[~flare]
