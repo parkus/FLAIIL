@@ -2,29 +2,35 @@ import numpy as np
 import numbers as nb
 import ranges
 import identify
-from scipy.stats import multivariate_normal
 import emcee
 from matplotlib import pyplot as plt
 
 def inject_recover(t0, t1, f, e, flare_ranges, qmodel, E, shape_function, trials_per_E=100, options={}):
 
-    # replace flare times with appropriately correlated noise. the emcee business how I handle drawing samples given
-    # that the non-flare samples should inform the flare samples. There is probably a cleaner way, but, hey, this works.
+    # replace flare times with appropriately correlated noise. this invovles computing a covariance matrix conditional
+    # upon the known (i.e. non-flare) data, which is kinda nasty
     t = (t0 + t1)/2.
     flare = ranges.inranges(t, flare_ranges)
-    covar = qmodel.get_matrix(t, include_diagonal=True)
+    # from https://newonlinecourses.science.psu.edu/stat505/node/43/
+    covar11 = qmodel.get_matrix(t[flare])
+    covar22 = qmodel.get_matrix(t[~flare])
+    covar12 = qmodel.get_matrix(t[flare], t[~flare])
+    covar21 = qmodel.get_matrix(t[~flare], t[flare])
     mean, _ = qmodel.curve(t)
-    f_filled = np.copy(f)
-    def conditional_loglike(f_fill):
-        f_filled[flare] = f_fill
-        return multivariate_normal.logpdf(f_filled, mean=mean, cov=covar)
-    nflare = int(np.sum(flare))
-    nwalkers = 4*nflare
-    pos0 = np.random.randn(nwalkers, nflare)*e[flare] + mean[flare][None,:]
-    sampler = emcee.EnsembleSampler(nwalkers, nflare, conditional_loglike)
-    sampler.run_mcmc(pos0, 100)
-    f_sim = sampler.chain[]
-
+    mu1 = mean[flare]
+    mu2 = mean[~flare]
+    f2 = f[~flare]
+    matrices = map(np.matrix, [f2, mu1, mu2, covar11, covar22, covar12, covar21])
+    f2, mu1, mu2, covar11, covar22, covar12, covar21 = matrices
+    inv22 = covar22**-1
+    f2, mu1, mu2 = [a.T for a in [f2, mu1, mu2]]
+    conditional_mean = mu1 + covar12 * inv22 * (f2 - mu2)
+    conditional_covar = covar11 - covar12 * inv22 * covar21
+    conditional_mean = np.array(conditional_mean).squeeze()
+    f_fill = np.random.multivariate_normal(conditional_mean, conditional_covar)
+    isort = np.argsort(f)
+    e_fill = np.interp(mean[flare], f[isort], e[isort])
+    f_fill += np.random.randn(np.sum(flare))*e_fill
 
     # pick a series of random times within the dataset
     T = np.sum(t1 - t0)
