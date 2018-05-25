@@ -2,6 +2,26 @@ import numpy as np
 import ranges
 
 
+def conditional_qmodel_draw(qmodel, t_known, f_known, t_new):
+    # from https://newonlinecourses.science.psu.edu/stat505/node/43/
+    qmodel = qmodel
+    covar11 = qmodel.get_matrix(t_new)
+    covar22 = qmodel.get_matrix(t_known)
+    covar12 = qmodel.get_matrix(t_new, t_known)
+    covar21 = qmodel.get_matrix(t_known, t_new)
+    mu1, _ = qmodel.curve(t_new)
+    mu2, _ = qmodel.curve(t_known)
+    f2 = f_known
+    matrices = map(np.matrix, [f2, mu1, mu2, covar11, covar22, covar12, covar21])
+    f2, mu1, mu2, covar11, covar22, covar12, covar21 = matrices
+    inv22 = covar22 ** -1
+    f2, mu1, mu2 = [a.T for a in [f2, mu1, mu2]]
+    conditional_mean = mu1 + covar12 * inv22 * (f2 - mu2)
+    conditional_covar = covar11 - covar12 * inv22 * covar21
+    conditional_mean = np.array(conditional_mean).squeeze()
+    return np.random.multivariate_normal(conditional_mean, conditional_covar)
+
+
 def run_slices(x, endpts=True):
     """
     Return the slice indices that separate runs (sequences of points above or below zero) in x.

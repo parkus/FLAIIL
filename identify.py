@@ -9,7 +9,7 @@ from scipy.optimize import minimize
 
 def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
     # parse options
-    maxiter = options.get('maxiter', len(f))
+    maxiter = options.get('maxiter', len(f)/5)
     sigma_clip_factor = options.get('sigma_clip_factor', 2.)
     sigma_suspect = options.get('sigma_flare', 3.)
     sigma_flare = options.get('sigma_flare', 5.)
