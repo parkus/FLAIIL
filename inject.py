@@ -2,13 +2,11 @@ import numpy as np
 import numbers as nb
 import ranges
 import identify
-from scipy.optimize import root
-from math import ceil
-from progressbar import ProgressBar, ETA, Percentage, Bar
+from scipy.integrate import quad
 from matplotlib import pyplot as plt
-pbar = ProgressBar(widgets=(Bar(), Percentage(), ETA(),))
 
-def inject_recover(t0, t1, f, e, energy0, shape_function, trials_per_E=100, options={}, silent=False):
+def inject_recover(t0, t1, f, e, energy0, shape_function, trials_per_E=100, options={}, silent=False,
+                   sampling_factor=5., Nmax=50):
 
     # just for brevity
     t = (t0 + t1)/2.
@@ -55,43 +53,65 @@ def inject_recover(t0, t1, f, e, energy0, shape_function, trials_per_E=100, opti
     # now inject flares and see if they are detected
     Etrials, completeness = [], []
 
-    def sample_to(cmplt):
-        def get_completeness(E):
-            if not silent:
-                print '    Sampling E = {:.2g}'.format(float(E))
-            n_detected = 0
-            n_trials = 0
-            for t_flare in t_flares:
-                f_flare = shape_function(E, t - t_flare)
-                f_test = f_filled + f_flare
-                e_test = np.sqrt(f_test/f_filled)*e
-                try:
-                    fr, _, _ = get_flares(f_test, e_test)
-                    if len(fr) > 1:
-                        n_detected += 1
-                    n_trials += 1
-                except StopIteration:
-                    continue
-            cmplt = float(n_detected)/n_trials
-            if not silent:
-                print '        completeness {:.2g}'.format(cmplt)
-            return cmplt
-
-        def callback(x, f):
-            Etrials.append(x)
-            completeness.append(f + cmplt)
-
-        result = root(lambda E: get_completeness(E) - cmplt, energy0, method='broyden1',
-                      options=dict(ftol=0.2), callback=callback)
-
-        return result.x[0]
-
-    n_smpl = ceil(np.log10(trials_per_E))
-    cmplt_smpl = np.logspace(np.log10(2./trials_per_E), np.log10(0.5), n_smpl, endpoint=False)
-    cmplt_smpl = np.concatenate([cmplt_smpl, [0.5], 1 - cmplt_smpl[::-1]])
-    for cmplt in cmplt_smpl:
+    def get_completeness(logE):
+        E = 10**logE
         if not silent:
-            'Finding energy for completeness of ~{:.3g}:'.format(cmplt)
-        energy0 = sample_to(cmplt)
+            print '    Sampling E = {:.2g}'.format(E)
+        n_detected = 0
+        n_trials = 0
+        for t_flare in t_flares:
+            f_flare = shape_function(E, t - t_flare)
+            f_test = f_filled + f_flare
+            e_test = np.sqrt(f_test/f_filled)*e
+            try:
+                fr, _, _ = get_flares(f_test, e_test)
+                if len(fr) >= 1:
+                    n_detected += 1
+                n_trials += 1
+            except StopIteration:
+                continue
+        cmplt = float(n_detected)/n_trials
+        if not silent:
+            print '        completeness {:.2g}'.format(cmplt)
+        Etrials.append(E)
+        completeness.append(cmplt)
+        return cmplt
 
-    return map(np.array, (Etrials, completeness))
+    # find where completeness is 0 and 1
+    try:
+        if not silent:
+            print 'Searching for completeness of 0...'
+        logE = np.log10(energy0)
+        while True:
+            cmplt = get_completeness(logE)
+            if cmplt > 0:
+                logE -= 0.3
+            else:
+                break
+        logE = np.log10(max(Etrials)*2)
+        if not silent:
+            print 'Searching for completeness of 1...'
+        while True:
+            cmplt = get_completeness(logE)
+            if cmplt < 1:
+                logE += 0.3
+            else:
+                break
+        Eary = np.array(Etrials)
+        Cary = np.array(completeness)
+        Ea = np.max(Eary[Cary == 0])
+        Eb = np.min(Eary[Cary == 1])
+        i_mid = np.argmin(np.abs(Cary - 0.5))
+        Emid = Eary[i_mid]
+
+        # use a numerical integrator to appropriately smaple between 0 and 1 completeness
+        if not silent:
+            print ('Using numerical integrator to sample between completeness of 0 and 1 (E = {:.2g} -- {:.2g}.'
+                   ''.format(Ea, Eb))
+            _ = quad(get_completeness, np.log10(Ea), np.log10(Eb), epsrel=1./sampling_factor, limit=Nmax,
+                     points=[Emid])
+    except:
+        print '!!! Exception occurred. Process terminated early.'
+        pass
+
+    return map(np.sort, (Etrials, completeness))
