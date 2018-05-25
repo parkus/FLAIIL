@@ -99,8 +99,8 @@ def inject_recover(t0, t1, f, e, energy0, shape_function, trials_per_E=100, opti
                 break
         Eary = np.array(Etrials)
         Cary = np.array(completeness)
-        Ea = np.max(Eary[Cary == 0])
-        Eb = np.min(Eary[Cary == 1])
+        Ea = np.max(Eary[Cary <= 0.01])
+        Eb = np.min(Eary[Cary >= 0.99])
         i_mid = np.argmin(np.abs(Cary - 0.5))
         Emid = Eary[i_mid]
 
