@@ -10,11 +10,14 @@ from scipy.optimize import minimize
 def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
     # parse options
     maxiter = options.get('maxiter', len(f)/5)
-    sigma_clip_factor = options.get('sigma_clip_factor', 2.)
-    sigma_suspect = options.get('sigma_flare', 3.)
+    mad_clip_factor = options.get('mad_clip_factor', 2.)
+    sigma_suspect = options.get('sigma_suspect', 3.)
     sigma_flare = options.get('sigma_flare', 5.)
     preclean = options.get('preclean', None)
-    extend_factor = options.get('extend_factor', 1.5)
+    extend_factor = options.get('extend_factor', 2.)
+    prepend_time = options.get('prepend_time', 30.)
+    tau_min = options.get('tau_min', 100.)
+    tau_logprior = options.get('tau_logprior', None)#lambda tau: np.log(tau))
 
     #region setup to handle gaps and other unchanging arrays
     t = (t0 + t1)/2.0
@@ -28,10 +31,12 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
     t_edges = np.unique(np.concatenate([t0, t1]))
     #endregion
 
-    qmodel = QuiescenceModel(t, f, e)
+    qmodel = QuiescenceModel(t, f, e, tau_min=tau_min, tau_logprior=tau_logprior)
     if preclean is None:
         # first pass using sigma-clipped points
-        clean = np.abs(f - np.nanmedian(f)) < sigma_clip_factor*np.nanstd(f)
+        residuals = np.abs(f - np.nanmedian(f))
+        mad = np.nanmedian(residuals)
+        clean = residuals < mad_clip_factor*mad
         qmodel.fit(clean)
         lo, lo_var = qmodel.curve(t)
     else:
@@ -71,6 +76,7 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
             oldclean.pop(0)
         spans = anom_ranges[:,1] - anom_ranges[:,0]
         anom_ranges[:,1] = anom_ranges[:,1] + extend_factor*spans
+        anom_ranges[:,0] = anom_ranges[:,0] - prepend_time
         in_flare = [np.searchsorted(rng, t) == 1 for rng in anom_ranges]
         clean = ~np.any(in_flare, 0) if len(anom_ranges) > 0 else np.ones(len(t), bool)
 
@@ -118,7 +124,7 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
 
 
 class QuiescenceModel(celerite.GP):
-    def __init__(self, t, f, e, params=None, mask=None):
+    def __init__(self, t, f, e, tau_min=100., tau_logprior=None, params=None, mask=None):
         terms = celerite.terms
         kernel = terms.RealTerm(log_a=np.log(np.var(f)), log_c=-10.)
         super(QuiescenceModel, self).__init__(kernel, mean=np.median(f), fit_mean=True)
@@ -128,10 +134,21 @@ class QuiescenceModel(celerite.GP):
             self.mask = mask
         else:
             self.mask = np.ones(len(t), bool)
+        self.tau_min = tau_min
+        self.tau_logprior = tau_logprior
         self.t, self.f, self.e = t, f, e
         self.n = len(self.t)
         self.fit_params = None
         self.quick_compute()
+
+
+    def tau_loglike(self, tau):
+        if tau < self.tau_min:
+            return -np.inf
+        if self.tau_logprior is None:
+            return 0
+        else:
+            return self.tau_logprior(tau)
 
     def quick_compute(self):
         super(QuiescenceModel, self).compute(self.t[self.mask], self.e[self.mask])
@@ -145,7 +162,9 @@ class QuiescenceModel(celerite.GP):
 
     def log_likelihood(self, params):
         self.set_parameter_vector(params)
-        return super(QuiescenceModel, self).log_likelihood(self.f[self.mask])
+        data_loglike = super(QuiescenceModel, self).log_likelihood(self.f[self.mask])
+        tau = 1./np.exp(params[1])
+        return data_loglike + self.tau_loglike(tau)
 
     def fit(self, mask=None, method='Nedler-Mead'):
         mask = self._get_set_mask(mask)
