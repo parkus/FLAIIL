@@ -113,3 +113,12 @@ def exposure_gaps(t0, t1):
     igaps, = np.nonzero(gaps)
     igaps += 1
     return igaps
+
+
+def get_repeats(ary_list):
+    for n in range(1, len(ary_list)/2):
+        chunk1 = ary_list[-n:]
+        chunk2 = ary_list[-2*n:-n]
+        if all([np.all(r1 == r2) for r1, r2 in zip(chunk1, chunk2)]):
+            return ary_list[-n:]
+    return None

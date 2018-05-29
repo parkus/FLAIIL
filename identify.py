@@ -2,7 +2,7 @@ import celerite
 import numpy as np
 import plots
 import ranges
-from numbers import gappy_runs, exposure_gaps
+from numbers import gappy_runs, exposure_gaps, get_repeats
 from matplotlib import pyplot as plt
 from scipy.optimize import minimize
 
@@ -10,7 +10,7 @@ from scipy.optimize import minimize
 def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
     # parse options
     maxiter = options.get('maxiter', len(f)/5)
-    mad_clip_factor = options.get('mad_clip_factor', 2.)
+    sigma_clip_factor = options.get('sigma_clip_factor', 2.)
     sigma_suspect = options.get('sigma_suspect', 3.)
     sigma_flare = options.get('sigma_flare', 5.)
     preclean = options.get('preclean', None)
@@ -34,9 +34,7 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
     qmodel = QuiescenceModel(t, f, e, tau_min=tau_min, tau_logprior=tau_logprior)
     if preclean is None:
         # first pass using sigma-clipped points
-        residuals = np.abs(f - np.nanmedian(f))
-        mad = np.nanmedian(residuals)
-        clean = residuals < mad_clip_factor*mad
+        clean = np.abs(f - np.nanmedian(f)) < sigma_clip_factor * np.nanstd(f)
         qmodel.fit(clean)
         lo, lo_var = qmodel.curve(t)
     else:
@@ -45,6 +43,7 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
         lo, lo_var = qmodel.curve(t)
     count = 0
     oldclean = []
+    breaknext = False
     while True:
         # get quiescence-subtracted values
         hi = f - lo
@@ -72,13 +71,9 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
         # update the flare point mask, extending the mask from the end of flares to be a bit to be conservative
         anom_ranges = np.array([begs[anom], ends[anom]]).T
         oldclean.append(clean)
-        if len(oldclean) > 2:
-            oldclean.pop(0)
         spans = anom_ranges[:,1] - anom_ranges[:,0]
         anom_ranges[:,1] = anom_ranges[:,1] + extend_factor*spans
         anom_ranges[:,0] = anom_ranges[:,0] - prepend_time
-        in_flare = [np.searchsorted(rng, t) == 1 for rng in anom_ranges]
-        clean = ~np.any(in_flare, 0) if len(anom_ranges) > 0 else np.ones(len(t), bool)
 
         # plot step if desired
         if plot_steps:
@@ -89,10 +84,15 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
             raw_input('Enter to close figure and continue.')
 
         # check for convergence (or oscillating convergence)
-        if np.all(clean == oldclean[-1]):
+        if breaknext:
             break
-        if count > 10 and np.all(clean == oldclean[-2]):
-            break
+        repeats = get_repeats(oldclean)
+        if repeats:
+            clean = np.mean(repeats, 0) >= 0.5
+            breaknext = True
+        else:
+            in_flare = [np.searchsorted(rng, t) == 1 for rng in anom_ranges]
+            clean = ~np.any(in_flare, 0) if len(anom_ranges) > 0 else np.ones(len(t), bool)
         if count > maxiter:
             raise StopIteration('Iteration limit of {} exceeded.'.format(maxiter))
 
@@ -106,7 +106,6 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
 
     # divide anomalous ranges into actual flares and just suspect ranges
     anom_ranges = reduce(ranges.rangeset_union, anom_ranges[1:], anom_ranges[:1])
-    anom_ranges = ranges.rangeset_intersect(anom_ranges, t_groups)
     sigmas = []
     for rng in anom_ranges:
         inrng = ranges.inranges(begs, rng, inclusive=[True, False])
@@ -163,15 +162,19 @@ class QuiescenceModel(celerite.GP):
     def log_likelihood(self, params):
         self.set_parameter_vector(params)
         data_loglike = super(QuiescenceModel, self).log_likelihood(self.f[self.mask])
-        tau = 1./np.exp(params[1])
+        tau = np.exp(-params[1])
         return data_loglike + self.tau_loglike(tau)
 
-    def fit(self, mask=None, method='Nedler-Mead'):
-        mask = self._get_set_mask(mask)
+    def log_likelihood_white_noise(self, log_sig2_and_mu):
+        self.set_parameter_vector([log_sig2_and_mu[0], np.inf, log_sig2_and_mu[1]])
+        return super(QuiescenceModel, self).log_likelihood(self.f[self.mask])
+
+    def fit(self, mask=None, method='Nelder-Mead'):
+        self._get_set_mask(mask)
         self.quick_compute()
         guess = self.get_parameter_vector()
-        soln = minimize(lambda params: -self.log_likelihood(params), guess, method='nelder-mead')
-        if not soln.success or np.allclose(soln.x, guess):
+        soln = minimize(lambda params: -self.log_likelihood(params), guess, method=method)
+        if not soln.success:
             raise ValueError('Gaussian process fit to quiescence did not converge. Perhaps try a different minimize '
                              'method or different initial parameters.')
         self.fit_params = soln.x

@@ -47,6 +47,8 @@ def weave(a, b):
 
 
 def rangeset_invert(ranges):
+    if len(ranges) == 0:
+        return np.array([[-np.inf, np.inf]])
     edges = ranges.ravel()
     rnglist = [edges[1:-1].reshape([-1, 2])]
     if edges[0] != -np.inf:
