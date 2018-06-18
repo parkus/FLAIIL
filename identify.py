@@ -28,7 +28,8 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
     t_gap_mid = (t_ends[1:-1:2] + t_ends[2::2]) / 2.
     dt_gaps = t_gap_end - t_gap_beg
     dt = t1 - t0
-    t_edges = np.unique(np.concatenate([t0, t1]))
+    t_edges = np.insert(t0, i_gaps, t1[i_gaps-1])
+    t_edges = np.append(t_edges, t1[-1])
     #endregion
 
     qmodel = QuiescenceModel(t, f, e, tau_min=tau_min, tau_logprior=tau_logprior)
@@ -64,6 +65,8 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
         begs, ends = gappy_runs(t, hi, t_ends, t_gap_mid)
         fluences = Iinterp(ends) - Iinterp(begs)
         fluence_vars = Vinterp(ends) - Vinterp(begs)
+
+        assert not (np.any(np.isnan(fluences)) or np.any(np.isnan(fluence_vars)))
 
         # flag runs that are anomalous
         anom = abs(fluences/np.sqrt(fluence_vars)) > sigma_suspect
@@ -125,7 +128,7 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
 class QuiescenceModel(celerite.GP):
     def __init__(self, t, f, e, tau_min=100., tau_logprior=None, params=None, mask=None):
         terms = celerite.terms
-        kernel = terms.RealTerm(log_a=np.log(np.var(f)), log_c=-10.)
+        kernel = terms.RealTerm(log_a=np.log(np.var(f)), log_c=-10.) + terms.JitterTerm(log_sigma=np.log(np.std(f)))
         super(QuiescenceModel, self).__init__(kernel, mean=np.median(f), fit_mean=True)
         if params is not None:
             self.set_parameter_vector(params)
@@ -166,7 +169,7 @@ class QuiescenceModel(celerite.GP):
         return data_loglike + self.tau_loglike(tau)
 
     def log_likelihood_white_noise(self, log_sig2_and_mu):
-        self.set_parameter_vector([log_sig2_and_mu[0], np.inf, log_sig2_and_mu[1]])
+        self.set_parameter_vector([0, np.inf, log_sig2_and_mu[0]/2, log_sig2_and_mu[1]])
         return super(QuiescenceModel, self).log_likelihood(self.f[self.mask])
 
     def fit(self, mask=None, method='Nelder-Mead'):

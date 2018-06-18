@@ -2,7 +2,7 @@ import numpy as np
 import numbers as nb
 import ranges
 import identify
-from scipy.integrate import quad
+import plots
 from matplotlib import pyplot as plt
 
 def inject_recover(t0, t1, f, e, energy0, shape_function, sample_dex=0.05,
@@ -16,75 +16,70 @@ def inject_recover(t0, t1, f, e, energy0, shape_function, sample_dex=0.05,
     # pick a series of random times within the dataset
     T = np.sum(t1 - t0)
     t_flares = np.random.uniform(t0[0], t0[0] + T, trials_per_E)
+    t_flares = np.sort(t_flares) # makes debugging a little easier
     i_gaps = nb.exposure_gaps(t0, t1)
     for i in i_gaps:
         t_flares[t_flares > t1[i-1]] += t0[i] - t1[i-1]
 
-    # replace flare times with appropriately correlated noise. this invovles computing a covariance matrix conditional
-    # upon the known (i.e. non-flare) data, which is kinda nasty
-    f_filled, e_filled = map(np.copy, [f, e])
-    if len(flare_ranges) > 0:
-        # pull random draws to fill where flares were until no false positives occur
-        anom_ranges = ranges.rangeset_union(flare_ranges, suspect_ranges)
-        flare = ranges.inranges(t, anom_ranges)
+    count = 1
+    while True:
+        if count > 10:
+            raise StopIteration("Having trouble getting a clean lightcurve filled with correlated noise where "
+                                "flares were. I'm afraid this will require some digging.")
 
-        isort = np.argsort(f) # comes in handy in a sec
+        f_filled, e_filled = lightcurve_fill(t, f, e, qmodel, flare_ranges)
 
-        count = 1
-        while True:
-            if count > 10:
-                raise StopIteration("Having trouble getting a clean lightcurve filled with correlated noise where "
-                                    "flares were. I'm afraid this will require some digging.")
+        # see if the simulated data result in any false positive flares
+        # if so, mask those and proceed
+        fr, sr, qm = get_flares(f_filled, e_filled)
+        if len(fr) > 0:
+            flare_ranges = ranges.rangeset_union(flare_ranges, fr)
+        else:
+            break
 
-            # estimate white noise error in flare range
-            mean_flare, _ = qmodel.curve(t[flare])
-            e_sim = np.interp(mean_flare, f[isort], e[isort])
-
-            # draw random fluxes and estimate what the uncertainty estimate would have been for those points
-            f_fill = nb.conditional_qmodel_draw(qmodel, t[~flare], f[~flare], t[flare])
-            f_fill += np.random.randn(np.sum(flare))*e_sim
-            e_fill = np.interp(f_fill, f[isort], e[isort])
-            e_filled[flare] = e_fill
-            f_filled[flare] = f_fill
-
-            # see if the simulated data result in any false positive flares
-            # if so, mask those and proceed
-            fr, sr, qm = get_flares(f_filled, e_filled)
-            if len(fr) > 0:
-                anom_ranges = ranges.rangeset_union(anom_ranges, fr)
-                flare = ranges.inranges(t, anom_ranges)
-            else:
-                break
-
-            count += 1
+        count += 1
 
     # now inject flares and see if they are detected
     Etrials, completeness = [], []
 
     def get_completeness(logE):
         E = 10**logE
-        if not silent:
+        if silent != False:
             print '    Sampling E = {:.2g}'.format(E)
         n_detected = 0
         n_trials = 0
         for t_flare in t_flares:
             f_test = shape_function(E, t_flare, f_filled)
-            e_test = np.sqrt(f_test/f_filled)*e
+            e_test = np.sqrt(f_test/f_filled)*e_filled
+            e_extra = np.sqrt(e_test**2 - e_filled**2)
+            f_test += np.random.randn(len(f_test))*e_extra
+            if silent == 'verbose':
+                print '    injecting at {:.1f}, '.format(t_flare),
             try:
-                fr, _, _ = get_flares(f_test, e_test)
+                fr, sr, q = get_flares(f_test, e_test)
                 if len(fr) >= 1:
+                    # plots.standard_flareplot(t, f_test, fr, sr, q)
+                    # raw_input('Enter to close and continue.')
+                    # plt.close()
+                    if silent == 'verbose':
+                        print 'detected flare(s) in ' + ', '.join(['[{:.1f}--{:.1f}]'.format(*_fr) for _fr in fr])
                     if ranges.inranges(t_flare, fr):
                         n_detected += 1
+                else:
+                    if silent == 'verbose':
+                        print 'no flares detected'
                 n_trials += 1
             except (StopIteration, ValueError):
+                if silent == 'verbose':
+                    print 'exception occurred'
                 continue
         if n_trials < trials_per_E/2.:
             raise ValueError("An error occurred in flare detection for more than half of the injections E = {:.2g} "
                              "(probably due to quiescence fit not converging). You should probably investigate."
                              "".format(E))
         cmplt = float(n_detected)/n_trials
-        if not silent:
-            print '        completeness {:.2g}'.format(cmplt)
+        if silent != False:
+            print '        completeness {:.3f}'.format(cmplt)
         Etrials.append(E)
         completeness.append(cmplt)
         return cmplt
@@ -117,3 +112,28 @@ def inject_recover(t0, t1, f, e, energy0, shape_function, sample_dex=0.05,
             raise
 
     return map(np.sort, (Etrials, completeness))
+
+
+def lightcurve_fill(t, f, e, qmodel, flare_ranges):
+    # replace flare times with appropriately correlated noise. this invovles computing a covariance matrix conditional
+    # upon the known (i.e. non-flare) data, which is kinda nasty
+    f_filled, e_filled = map(np.copy, [f, e])
+    if len(flare_ranges) > 0:
+        # pull random draws to fill where flares were until no false positives occur
+        flare = ranges.inranges(t, flare_ranges)
+
+        isort = np.argsort(f) # comes in handy in a sec
+
+        # estimate white noise error in flare range
+        mean_flare, _ = qmodel.curve(t[flare])
+        e_sim = np.interp(mean_flare, f[isort], e[isort])
+
+        # draw random fluxes and estimate what the uncertainty estimate would have been for those points
+        f_fill = nb.conditional_qmodel_draw(qmodel, t[~flare], f[~flare], t[flare])
+        f_fill += np.random.randn(np.sum(flare))*e_sim
+        e_fill = np.interp(f_fill, f[isort], e[isort])
+        e_filled[flare] = e_fill
+        f_filled[flare] = f_fill
+        return f_filled, e_filled
+    else:
+        return f, e
