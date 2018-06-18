@@ -128,7 +128,7 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
 class QuiescenceModel(celerite.GP):
     def __init__(self, t, f, e, tau_min=100., tau_logprior=None, params=None, mask=None):
         terms = celerite.terms
-        kernel = terms.RealTerm(log_a=np.log(np.var(f)), log_c=-10.) + terms.JitterTerm(log_sigma=np.log(np.std(f)))
+        kernel = terms.RealTerm(log_a=np.log(np.var(f)), log_c=-10.)
         super(QuiescenceModel, self).__init__(kernel, mean=np.median(f), fit_mean=True)
         if params is not None:
             self.set_parameter_vector(params)
@@ -169,7 +169,7 @@ class QuiescenceModel(celerite.GP):
         return data_loglike + self.tau_loglike(tau)
 
     def log_likelihood_white_noise(self, log_sig2_and_mu):
-        self.set_parameter_vector([0, np.inf, log_sig2_and_mu[0]/2, log_sig2_and_mu[1]])
+        self.set_parameter_vector([log_sig2_and_mu[0], np.inf, log_sig2_and_mu[1]])
         return super(QuiescenceModel, self).log_likelihood(self.f[self.mask])
 
     def fit(self, mask=None, method='Nelder-Mead'):
