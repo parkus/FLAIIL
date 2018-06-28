@@ -139,18 +139,28 @@ class QuiescenceModel(celerite.GP):
         self.tau_min = tau_min
         self.tau_logprior = tau_logprior
         self.t, self.f, self.e = t, f, e
+        self.var_med = np.median(e)**2
         self.n = len(self.t)
         self.fit_params = None
         self.quick_compute()
-
 
     def tau_loglike(self, tau):
         if tau < self.tau_min:
             return -np.inf
         if self.tau_logprior is None:
-            return 0
+            return 0.0
         else:
             return self.tau_logprior(tau)
+
+    def smoothness_penalty(self, params):
+        self.set_parameter_vector(params)
+        power10 = self.kernel.get_psd(2*np.pi/10)
+        if power10 == 0:
+            return 0.0
+        if power10 == np.inf or np.isnan(power10):
+            return -np.inf
+        else:
+            return -5*power10
 
     def quick_compute(self):
         super(QuiescenceModel, self).compute(self.t[self.mask], self.e[self.mask])
@@ -168,20 +178,61 @@ class QuiescenceModel(celerite.GP):
         tau = np.exp(-params[1])
         return data_loglike + self.tau_loglike(tau)
 
+    def cost(self, params):
+        return -(self.log_likelihood(params) + self.smoothness_penalty(params))
+        # return -self.log_likelihood(params)
+
     def log_likelihood_white_noise(self, log_sig2_and_mu):
         self.set_parameter_vector([log_sig2_and_mu[0], np.inf, log_sig2_and_mu[1]])
+        return super(QuiescenceModel, self).log_likelihood(self.f[self.mask])
+
+    def log_likelihood_no_noise(self, mu):
+        self.set_parameter_vector([-np.inf, np.inf, mu])
         return super(QuiescenceModel, self).log_likelihood(self.f[self.mask])
 
     def fit(self, mask=None, method='Nelder-Mead'):
         self._get_set_mask(mask)
         self.quick_compute()
         guess = self.get_parameter_vector()
-        soln = minimize(lambda params: -self.log_likelihood(params), guess, method=method)
+        soln = minimize(lambda params: self.cost(params), guess, method=method, options=dict(maxiter=200))
         if not soln.success:
             raise ValueError('Gaussian process fit to quiescence did not converge. Perhaps try a different minimize '
                              'method or different initial parameters.')
         self.fit_params = soln.x
         self.set_to_best_fit()
+
+    def _get_params_boiler(self, params):
+        if params is None:
+            params = self.get_parameter_vector()
+        return np.reshape(params, [-1,3])
+
+    def tau(self, params=None):
+        params = self._get_params_boiler(params)
+        return np.squeeze(np.exp(-params[:,1]))
+
+    def sigma(self, params=None):
+        params = self._get_params_boiler(params)
+        return np.squeeze(np.exp(params[:,0]/2))
+
+    def mu(self, params=None):
+        params = self._get_params_boiler(params)
+        return np.squeeze(params[:,2])
+
+    def sigma_rel(self, params=None):
+        return np.squeeze(self.sigma(params)/self.mu(params))
+
+    def sigma_relative_at_tbin(self, tbin, params=None):
+        params = self._get_params_boiler(params)
+        loga, logc, mu = params.T
+        sig, c = np.exp(loga/2), np.exp(logc)
+        with np.errstate(invalid='ignore', over='ignore'):
+            x = c*tbin
+            sig_dt = np.sqrt(2*(sig/x)**2 * (x + np.exp(-x) - 1))
+            uncorrelated = (x == np.inf)
+            if np.any(uncorrelated):
+                dt = np.median(np.diff(self.t))
+                sig_dt[uncorrelated] = sig[uncorrelated]/np.sqrt(tbin/dt)
+        return np.squeeze(sig_dt/mu)
 
     def set_to_best_fit(self):
         self.set_parameter_vector(self.fit_params)

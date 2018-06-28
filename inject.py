@@ -6,7 +6,7 @@ import plots
 from matplotlib import pyplot as plt
 
 def inject_recover(t0, t1, f, e, energy0, shape_function, sample_dex=0.05,
-                   trials_per_E=100, options={}, silent=False, return_on_exception=False):
+                   trials_per_E=100, options={}, silent=False, return_on_exception=False, sample_energies=None):
 
     # just for brevity
     t = (t0 + t1)/2.
@@ -39,8 +39,6 @@ def inject_recover(t0, t1, f, e, energy0, shape_function, sample_dex=0.05,
 
         count += 1
 
-    # now inject flares and see if they are detected
-    Etrials, completeness = [], []
 
     def get_completeness(logE):
         E = 10**logE
@@ -80,30 +78,38 @@ def inject_recover(t0, t1, f, e, energy0, shape_function, sample_dex=0.05,
         cmplt = float(n_detected)/n_trials
         if silent != False:
             print '        completeness {:.3f}'.format(cmplt)
-        Etrials.append(E)
-        completeness.append(cmplt)
         return cmplt
 
-    # find where completeness is 0 and 1
+    # now inject flares and see if they are detected
     try:
-        if not silent:
-            print 'Searching for completeness of 0...'
-        logE = np.log10(energy0)
-        while True:
-            cmplt = get_completeness(logE)
-            if cmplt > 0:
-                logE -= sample_dex
-            else:
-                break
-        logE = np.log10(max(Etrials)) + sample_dex
-        if not silent:
-            print 'Searching for completeness of 1...'
-        while True:
-            cmplt = get_completeness(logE)
-            if cmplt < 1:
-                logE += sample_dex
-            else:
-                break
+        if sample_energies:
+            Etrials = sample_energies
+            completeness = map(get_completeness, np.log10(sample_energies))
+        else:
+            # find where completeness is 0 and 1, sampling at the dex desired
+            Etrials, completeness = [], []
+            if not silent:
+                print 'Searching for completeness of 0...'
+            logE = np.log10(energy0)
+            while True:
+                cmplt = get_completeness(logE)
+                Etrials.append(10**logE)
+                completeness.append(cmplt)
+                if cmplt > 0:
+                    logE -= sample_dex
+                else:
+                    break
+            logE = np.log10(max(Etrials)) + sample_dex
+            if not silent:
+                print 'Searching for completeness of 1...'
+            while True:
+                cmplt = get_completeness(logE)
+                Etrials.append(10 ** logE)
+                completeness.append(cmplt)
+                if cmplt < 1:
+                    logE += sample_dex
+                else:
+                    break
     except:
         if return_on_exception:
             print '!!! Exception occurred. Process terminated early.'
