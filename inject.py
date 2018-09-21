@@ -2,11 +2,18 @@ import numpy as np
 import numbers as nb
 import ranges
 import identify
+from warnings import warn
 import plots
 from matplotlib import pyplot as plt
 
-def inject_recover(t0, t1, f, e, energy0, shape_function, sample_dex=0.05,
-                   trials_per_E=100, options={}, silent=False, return_on_exception=False, sample_energies=None):
+
+def inject_recover(t0, t1, f, e, multiplicative_profile, additive_profile=None):
+    pass # for single energy
+
+
+def explore_completeness(t0, t1, f, e, energy0, shape_function, sample_dex=0.05,
+                                 trials_per_E=100, options={}, silent=False, return_on_exception=False,
+                                 sample_energies=None):
 
     # just for brevity
     t = (t0 + t1)/2.
@@ -47,7 +54,9 @@ def inject_recover(t0, t1, f, e, energy0, shape_function, sample_dex=0.05,
         n_detected = 0
         n_trials = 0
         for t_flare in t_flares:
-            f_test = shape_function(E, t_flare, f_filled)
+            f_quiescent = qm.curve(t)
+            f_flare = shape_function(E, t_flare, f_quiescent)
+            f_test = f_filled + f_flare
             e_test = np.sqrt(f_test/f_filled)*e_filled
             e_extra = np.sqrt(e_test**2 - e_filled**2)
             f_test += np.random.randn(len(f_test))*e_extra
@@ -117,16 +126,21 @@ def inject_recover(t0, t1, f, e, energy0, shape_function, sample_dex=0.05,
         else:
             raise
 
-    return map(np.sort, (Etrials, completeness))
+    isort = np.argsort(Etrials)
+    # need to return error on energy
+    #, completeness, ))
 
 
 def lightcurve_fill(t, f, e, qmodel, flare_ranges):
-    # replace flare times with appropriately correlated noise. this invovles computing a covariance matrix conditional
+    # replace flare times with appropriately correlated noise. this involves computing a covariance matrix conditional
     # upon the known (i.e. non-flare) data, which is kinda nasty
     f_filled, e_filled = map(np.copy, [f, e])
     if len(flare_ranges) > 0:
         # pull random draws to fill where flares were until no false positives occur
         flare = ranges.inranges(t, flare_ranges)
+        if not np.any(flare):
+            raise warn("Flare ranges were supplied, yet no points were within these ranges.")
+            return f, e
 
         isort = np.argsort(f) # comes in handy in a sec
 

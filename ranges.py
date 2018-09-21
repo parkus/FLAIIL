@@ -1,7 +1,24 @@
+"""
+Utilities for handling numerical ranges.
+"""
+
 import numpy as np
 
 
 def rangeset_union(ranges0, ranges1):
+    """
+    Return the union of two sets of *sorted* ranges.
+
+    Parameters
+    ----------
+    ranges0 : Nx2 array
+    ranges1 : Nx2 array
+
+    Returns
+    -------
+    union_ranges : Nx2 array
+
+    """
     invrng0, invrng1 = map(rangeset_invert, [ranges0, ranges1])
     xinv = rangeset_intersect(invrng0, invrng1)
     return rangeset_invert(xinv)
@@ -9,7 +26,18 @@ def rangeset_union(ranges0, ranges1):
 
 def rangeset_intersect(ranges0, ranges1, presorted=False):
     """
-    Return the intersection of two sets of sorted ranges, given as Nx2 array-like.
+    Return the intersection of two sets of ranges.
+
+    Parameters
+    ----------
+    ranges0 : Nx2 array
+    ranges1 : Nx2 array
+    presorted : bool
+        If True, ranges are assumed to be sorted.
+
+    Returns
+    -------
+    intersecting_ranges : Nx2 array
     """
 
     if len(ranges0) == 0 or len(ranges1) == 0:
@@ -37,16 +65,18 @@ def rangeset_intersect(ranges0, ranges1, presorted=False):
     return np.array([l, r]).T
 
 
-def weave(a, b):
-    """
-    Insert values from b into a in a way that maintains their order. Both must
-    be sorted.
-    """
-    mapba = np.searchsorted(a, b)
-    return np.insert(a, mapba, b)
-
-
 def rangeset_invert(ranges):
+    """
+    Return the inverse of the provided ranges.
+
+    Parameters
+    ----------
+    ranges : Nx2 array
+
+    Returns
+    -------
+    inverted_ranges : Nx2 array
+    """
     if len(ranges) == 0:
         return np.array([[-np.inf, np.inf]])
     edges = ranges.ravel()
@@ -70,7 +100,7 @@ def inranges(values, ranges, inclusive=[False, True]):
     ranges : 1-D or 2-D array-like
         The ranges used to check whether values are in or out.
         If 2-D, ranges should have dimensions Nx2, where N is the number of
-        ranges. If 1-D, it should have length 2N. A 2xN array may be used, but
+        ranges. If 1-D, it should have length 2N. A 2xN array may also be used, but
         note that it will be assumed to be Nx2 if N == 2.
     inclusive : length 2 list of booleans
         Whether to treat bounds as inclusive. Because it is the default
@@ -78,7 +108,10 @@ def inranges(values, ranges, inclusive=[False, True]):
         well. Using [False, False] or [True, True] will require roughly triple
         computation time.
 
-    Returns a boolean array indexing the values that are in the ranges.
+    Returns
+    ------
+    inside : array
+        a boolean array indexing the values that are in the ranges.
     """
     ranges = np.asarray(ranges)
     if ranges.ndim == 2:
@@ -98,3 +131,12 @@ def inranges(values, ranges, inclusive=[False, True]):
         a = (np.searchsorted(ranges, values) % 2 == 1)
         b = (np.searchsorted(ranges, values, side='right') % 2 == 1)
         return (a & b)
+
+
+def weave(a, b):
+    """
+    Insert values from b into a in a way that maintains their order. Both must
+    be sorted.
+    """
+    mapba = np.searchsorted(a, b)
+    return np.insert(a, mapba, b)
