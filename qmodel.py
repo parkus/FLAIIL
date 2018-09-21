@@ -1,5 +1,9 @@
+from warnings import warn
+
 import celerite
+import numbers as nb
 import numpy as np
+import ranges
 from scipy.optimize import minimize
 
 
@@ -356,3 +360,47 @@ class QuiescenceModel(celerite.GP):
             return self.mu()*np.ones_like(t), self.sigma()**2*np.ones_like(t)
         else:
             return self.predict(self.f[self.mask], t, return_var=True)
+
+
+def lightcurve_fill(t, f, e, qmodel, flare_ranges):
+    """
+    Replace flare times with simulated data based on the qmodel with appropriately correlated noise.
+
+    Parameters
+    ----------
+    t, f, e : arrays
+        Lightcurve points -- time, flux, energy.
+    qmodel : QuiescenceModel
+        Gassian Process model for quiescent variations in lightcurve.
+    flare_ranges : Nx2 array
+        Start and end time of each flare.
+
+    Returns
+    -------
+    f_filled, e_filled : arrays
+        Flux and error arrays where regions within flares  have been filled with simulated data.
+    """
+
+    f_filled, e_filled = map(np.copy, [f, e])
+    if len(flare_ranges) > 0:
+        # pull random draws to fill where flares were until no false positives occur
+        flare = ranges.inranges(t, flare_ranges)
+        if not np.any(flare):
+            raise warn("Flare ranges were supplied, yet no points were within these ranges.")
+            return f, e
+
+        isort = np.argsort(f) # comes in handy in a sec
+
+        # estimate white noise error in flare range
+        mean_flare, _ = qmodel.curve(t[flare])
+        e_sim = np.interp(mean_flare, f[isort], e[isort])
+
+        # draw random fluxes and estimate what the uncertainty estimate would have been for those points
+        f_fill = nb.conditional_qmodel_draw(qmodel, t[~flare], f[~flare], t[flare])
+        f_fill += np.random.randn(np.sum(flare))*e_sim
+        e_fill = np.interp(f_fill, f[isort], e[isort])
+        e_filled[flare] = e_fill
+        f_filled[flare] = f_fill
+        return f_filled, e_filled
+    else:
+        return f, e

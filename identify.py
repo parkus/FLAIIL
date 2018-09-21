@@ -7,6 +7,78 @@ from matplotlib import pyplot as plt
 
 
 def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
+    """
+    Use an iterative algorithm to identify flares in a lightcurve.
+
+    The algorithm works by first applying a sigma clip, then fitting a model to lightcurve variations and identifying
+    "runs" of points above quiescence that are statistically unlikely. The anomalous runs are masked out, the
+    quiescent variations refit, and new statistically anomalous runs identified. This process is iterated until
+    the points marked as within anomalous runs begins to repeat.
+
+    Parameters
+    ----------
+    t0 : array
+        starting edges of lightcurve time bins
+    t1 : array
+        ending edges of lightcurve time bins
+    f : array
+        flux
+    e : array
+        error
+    options : dict
+        Dictionary of knobs to turn for the identification algorithm.
+        Options include:
+            maxiter : Maximum number of iterations allowed.
+            Default is len(f)/5.
+            sigma_clip_factor : Initial sigma clip factor. Recommend a
+                conservative value as large deviations can cause wonky
+                quiescence fits. Default is 2.
+            sigma_suspect : Cutoff for a run of points above or
+                below quiescence to be flagged as anomalous and
+                excluded from further fitting, taken as the area of
+                the run divided by the uncertainty in that area.
+            sigma_flare : Similar to sigma_suspect, but for a run
+                of points above quiescence to be flagged as a flare.
+            preclean : A boolean array giving a first guess at which
+                points should be masked out. False implies point will
+                not be fit with quiescence model. Optional. I can't
+                remember why I added this, but I think  I had a good
+                reason... Default is None.
+            extend_factor : Simple factor by which to extend flare
+                runs. This is necessary to mitigate confusion between
+                the tail of a flare and quiescent variations. Default
+                is 2.
+            prepend_time : Similar to extend factor, but a simple
+                length of time to prepend to the flare runs. This is
+                less important than extend_factor since flux generally
+                increases very rapidly during flares.
+            tau_min : Minimum autocorrelation timescale to consider
+                when fitting quiescent variations with Gaussian Process
+                model. Helps keep the solution from getting stuck on
+                tau = 0 and not exploring other options.
+            tau_logprior : A function serving as a prior on the
+                autocorrelation timescale, tau. This should accept a
+                single value as input and return the ln(likelihood) of
+                that value. Optional. The original intent was to use
+                this for encouraging smoothness in the quiescence model,
+                but ultimately I built this into the QuisecenceModel
+                class by default.
+    plot_steps : bool
+        If True, plot each step of the identification process. Good for
+        making sure nothing silly is happening.
+
+    Returns
+    -------
+    flare_ranges : 2xN array
+        Start and end of ranges identified as belonging to flares.
+    suspect_ranges : 2xN array
+        Start and end of ranges identified as statistically anomalous,
+        but not belonging  to flares.
+    qmodel : QuiescenceModel
+        Object specifying a model for quiescent variations. (More details
+        in the documentation for the qmodel.QuisecenceModel class.)
+    """
+
     # parse options
     maxiter = options.get('maxiter', len(f)/5 if len(f)/5 > 25 else 25)
     sigma_clip_factor = options.get('sigma_clip_factor', 2.)
