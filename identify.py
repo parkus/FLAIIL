@@ -1,7 +1,7 @@
 import numpy as np
 import plots
 import ranges
-from flaiil import QuiescenceModel
+from qmodel import QuiescenceModel
 from numbers import gappy_runs, exposure_gaps, get_repeats
 from matplotlib import pyplot as plt
 
