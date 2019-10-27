@@ -1,7 +1,9 @@
 """Numerical utilities."""
 
+from __future__ import division, print_function, absolute_import
+
 import numpy as np
-import ranges
+from . import ranges
 
 def conditional_qmodel_draw(qmodel, t_known, f_known, t_new):
     """
@@ -48,7 +50,7 @@ def conditional_qmodel_draw(qmodel, t_known, f_known, t_new):
         f2 = f_known
 
         # make everything a matrix (for more readable math)
-        matrices = map(np.matrix, [f2, mu1, mu2, covar11, covar22, covar12, covar21])
+        matrices = list(map(np.matrix, [f2, mu1, mu2, covar11, covar22, covar12, covar21]))
         f2, mu1, mu2, covar11, covar22, covar12, covar21 = matrices
 
         # compute conditional covariance matrix and mean vector to specificy multivariate normal distribution

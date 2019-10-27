@@ -1,6 +1,7 @@
 """
 Utilities for handling numerical ranges.
 """
+from __future__ import division, print_function, absolute_import
 
 import numpy as np
 
@@ -19,7 +20,7 @@ def rangeset_union(ranges0, ranges1):
     union_ranges : Nx2 array
 
     """
-    invrng0, invrng1 = map(rangeset_invert, [ranges0, ranges1])
+    invrng0, invrng1 = list(map(rangeset_invert, [ranges0, ranges1]))
     xinv = rangeset_intersect(invrng0, invrng1)
     return rangeset_invert(xinv)
 
@@ -42,7 +43,7 @@ def rangeset_intersect(ranges0, ranges1, presorted=False):
 
     if len(ranges0) == 0 or len(ranges1) == 0:
         return np.empty([0, 2])
-    rng0, rng1 = map(np.asarray, [ranges0, ranges1])
+    rng0, rng1 = list(map(np.asarray, [ranges0, ranges1]))
     rng0, rng1 = [np.reshape(a, [-1, 2]) for a in [rng0, rng1]]
 
     if not presorted:

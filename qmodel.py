@@ -1,9 +1,11 @@
+from __future__ import division, print_function, absolute_import
+
 from warnings import warn
 
 import celerite
-import numbers as nb
+from . import numbers as nb
 import numpy as np
-import ranges
+from . import ranges
 from scipy.optimize import minimize
 
 
@@ -381,7 +383,7 @@ def lightcurve_fill(t, f, e, qmodel, flare_ranges):
         Flux and error arrays where regions within flares  have been filled with simulated data.
     """
 
-    f_filled, e_filled = map(np.copy, [f, e])
+    f_filled, e_filled = list(map(np.copy, [f, e]))
     if len(flare_ranges) > 0:
         # pull random draws to fill where flares were until no false positives occur
         flare = ranges.inranges(t, flare_ranges)

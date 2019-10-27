@@ -1,9 +1,12 @@
+from __future__ import division, print_function, absolute_import
+
 import numpy as np
-import plots
-import ranges
-from qmodel import QuiescenceModel
-from numbers import gappy_runs, exposure_gaps, get_repeats
+from . import plots
+from . import ranges
+from .qmodel import QuiescenceModel
+from .numbers import gappy_runs, exposure_gaps, get_repeats
 from matplotlib import pyplot as plt
+from functools import reduce
 
 
 def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
@@ -158,7 +161,7 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
             fnan = np.insert(f, i_gaps, np.nan)
             plots.standard_flareplot(tnan, fnan, anom_ranges, anom_ranges, qmodel)
             plt.title('Iteration {}'.format(count))
-            raw_input('Enter to close figure and continue.')
+            input('Enter to close figure and continue.')
 
         # check for convergence (or oscillating convergence)
         if breaknext:
