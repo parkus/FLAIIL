@@ -1,7 +1,7 @@
 """
 FLAIIL: FLAre Identification in Interrupted Lightcurves
 """
-from __future__ import division, print_function, absolute_import
+
 
 from . import numbers
 from . import ranges

@@ -161,7 +161,7 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
             fnan = np.insert(f, i_gaps, np.nan)
             plots.standard_flareplot(tnan, fnan, anom_ranges, anom_ranges, qmodel)
             plt.title('Iteration {}'.format(count))
-            input('Enter to close figure and continue.')
+            eval(input('Enter to close figure and continue.'))
 
         # check for convergence (or oscillating convergence)
         if breaknext:
