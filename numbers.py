@@ -228,7 +228,7 @@ def get_repeats(ary_list):
         A list of the data vectors that repeat. If no repeats, None is returned.
     """
     # for all "chunk sizes" from 1 to half the length of the list
-    for n in range(1, len(ary_list)/2):
+    for n in range(1, int(len(ary_list)/2)):
         chunk1 = ary_list[-n:] # last chunk of data vectors
         chunk2 = ary_list[-2*n:-n] # second to last chunk of data vectors
         # if all data vectors in the last and second to last chunk match, we have a repeat. return it.
