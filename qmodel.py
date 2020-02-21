@@ -364,7 +364,7 @@ class QuiescenceModel(celerite.GP):
             return self.predict(self.f[self.mask], t, return_var=True)
 
 
-def lightcurve_fill(t, f, e, qmodel, flare_ranges):
+def lightcurve_fill(t, f, e, qmodel, fill_ranges):
     """
     Replace flare times with simulated data based on the qmodel with appropriately correlated noise.
 
@@ -374,7 +374,7 @@ def lightcurve_fill(t, f, e, qmodel, flare_ranges):
         Lightcurve points -- time, flux, energy.
     qmodel : QuiescenceModel
         Gassian Process model for quiescent variations in lightcurve.
-    flare_ranges : Nx2 array
+    fill_ranges : Nx2 array
         Start and end time of each flare.
 
     Returns
@@ -384,9 +384,9 @@ def lightcurve_fill(t, f, e, qmodel, flare_ranges):
     """
 
     f_filled, e_filled = list(map(np.copy, [f, e]))
-    if len(flare_ranges) > 0:
+    if len(fill_ranges) > 0:
         # pull random draws to fill where flares were until no false positives occur
-        flare = ranges.inranges(t, flare_ranges)
+        flare = ranges.inranges(t, fill_ranges)
         if not np.any(flare):
             warn("Flare ranges were supplied, yet no points were within these ranges.")
             return f, e
