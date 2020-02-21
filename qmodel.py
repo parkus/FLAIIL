@@ -388,7 +388,7 @@ def lightcurve_fill(t, f, e, qmodel, flare_ranges):
         # pull random draws to fill where flares were until no false positives occur
         flare = ranges.inranges(t, flare_ranges)
         if not np.any(flare):
-            raise warn("Flare ranges were supplied, yet no points were within these ranges.")
+            warn("Flare ranges were supplied, yet no points were within these ranges.")
             return f, e
 
         isort = np.argsort(f) # comes in handy in a sec
