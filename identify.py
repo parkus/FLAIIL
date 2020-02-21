@@ -82,6 +82,10 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
         in the documentation for the qmodel.QuisecenceModel class.)
     """
 
+    bad_values =  [np.any(~np.isfinite(a)) for a in (t0, t1, f, e)]
+    if any(bad_values):
+        raise ValueError("Some of the values in your input aren't finite. Fix it!")
+
     # parse options
     maxiter = options.get('maxiter', len(f)/5 if len(f)/5 > 25 else 25)
     sigma_clip_factor = options.get('sigma_clip_factor', 2.)
@@ -141,7 +145,14 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
         fluences = Iinterp(ends) - Iinterp(begs)
         fluence_vars = Vinterp(ends) - Vinterp(begs)
 
-        assert not (np.any(np.isnan(fluences)) or np.any(np.isnan(fluence_vars)))
+        if (np.any(np.isnan(fluences)) or np.any(np.isnan(fluence_vars))):
+            raise ValueError('Uh oh, nans! Usually this is because the gaussian '
+                             'process spit out a nan when the code used it to '
+                             'predict quiescent values, and usually that was '
+                             'because there was a really really big gap in the '
+                             'data. A workaround is to just analyze sections '
+                             'of data separated by really huge gaps '
+                             'individually.')
 
         # flag runs that are anomalous
         significance = abs(fluences/np.sqrt(fluence_vars))
@@ -161,7 +172,7 @@ def identify_flares(t0, t1, f, e, options={}, plot_steps=False):
             fnan = np.insert(f, i_gaps, np.nan)
             plots.standard_flareplot(tnan, fnan, anom_ranges, anom_ranges, qmodel)
             plt.title('Iteration {}'.format(count))
-            eval(input('Enter to close figure and continue.'))
+            input('Enter to close figure and continue.')
 
         # check for convergence (or oscillating convergence)
         if breaknext:
